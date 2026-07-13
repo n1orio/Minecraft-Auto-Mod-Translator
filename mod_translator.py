@@ -10,41 +10,32 @@ from tkinter import filedialog
 from deep_translator import GoogleTranslator
 
 # --- НАСТРОЙКИ ПО УМОЛЧАНИЮ ---
-RP_NAME = "TranslatedModsPack"  # Название готового ресурспака
-PACK_FORMAT = 15  # Формат ресурспака (15 = 1.20.x, 3 = 1.12.2)
-CHUNK_SIZE = 50  # Количество строк для пакетного перевода за один раз
+RP_NAME = "TranslatedModsPack"
+PACK_FORMAT = 15
+CHUNK_SIZE = 50
 # ------------------------------
 
 
 def choose_directory():
-    """Открывает диалоговое окно для выбора папки mods"""
     root = tk.Tk()
-    root.withdraw()  # Скрываем основное окно tkinter
+    root.withdraw()
     root.attributes("-topmost", True)
-    folder_path = filedialog.askdirectory(title="Выберите папку mods с вашими модами")
-    return folder_path
+    return filedialog.askdirectory(title="Выберите папку mods с вашими модами")
 
 
 def cleanup_translation(text):
-    """Исправляет сломанные Гуглом переменные Minecraft и коды цветов"""
     if not isinstance(text, str):
         return text
-    # Исправляем позиционные переменные: % 1 $ s -> %1$s
     text = re.sub(r"%\s*(\d+)\s*\$\s*([sd])", r"%\1$\2", text)
-    # Исправляем обычные переменные: % s -> %s, % d -> %d
     text = re.sub(r"%\s*([sd])", r"%\1", text)
-    # Исправляем символы цвета: § a -> §a
     text = re.sub(r"§\s*([0-9a-fk-or])", r"§\1", text)
-    # Исправляем переносы строк: \ n -> \n
     text = re.sub(r"\\\s*n", r"\\n", text)
     return text
 
 
 def parse_lang_file(content):
-    """Парсит старый формат .lang (для версий 1.12.2 и ниже)"""
     data = {}
-    lines = content.splitlines()
-    for line in lines:
+    for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -54,19 +45,15 @@ def parse_lang_file(content):
 
 
 def build_lang_file(data):
-    """Собирает словарь обратно в формат .lang"""
     return "\n".join(f"{k}={v}" for k, v in data.items())
 
 
 def create_rp_structure(target_dir):
-    """Создает pack.mcmeta для ресурспака"""
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir)
-
+    os.makedirs(target_dir, exist_ok=True)
     mcmeta = {
         "pack": {
             "pack_format": PACK_FORMAT,
-            "description": "Автоматический перевод модов (Auto Translator)",
+            "description": "Auto Translator - Smart Mode",
         }
     }
     with open(os.path.join(target_dir, "pack.mcmeta"), "w", encoding="utf-8") as f:
@@ -74,12 +61,9 @@ def create_rp_structure(target_dir):
 
 
 def main():
-    print("=== Auto Mod Translator ===")
-    print("Пожалуйста, выберите папку mods в открывшемся окне...")
-
+    print("=== Auto Mod Translator (SMART MODE) ===")
     mods_folder = choose_directory()
     if not mods_folder:
-        print("Папка не выбрана. Выход.")
         return
 
     print(f"Выбрана папка: {mods_folder}")
@@ -87,22 +71,17 @@ def main():
     create_rp_structure(rp_dir)
 
     translator = GoogleTranslator(source="en", target="ru")
-
-    mods_processed = 0
-    mods_translated = 0
+    mods_processed, mods_translated = 0, 0
 
     for filename in os.listdir(mods_folder):
         if not filename.endswith(".jar"):
             continue
-
         mods_processed += 1
         jar_path = os.path.join(mods_folder, filename)
 
         try:
             with zipfile.ZipFile(jar_path, "r") as jar:
                 files = jar.namelist()
-
-                # Ищем en_us.json (новые версии) или en_US.lang (старые версии)
                 en_files = [
                     f
                     for f in files
@@ -111,27 +90,14 @@ def main():
 
                 for en_file in en_files:
                     is_json = en_file.lower().endswith(".json")
-                    ru_file = re.sub(r"en_us", "ru_ru", en_file, flags=re.IGNORECASE)
-                    ru_file_alt = re.sub(
-                        r"en_US", "ru_RU", en_file
-                    )  # Для .lang часто важен регистр
 
-                    # Проверка наличия перевода в самом моде
-                    if ru_file in files or ru_file_alt in files:
-                        print(f"[ПРОПУСК] {filename} — русский перевод уже встроен.")
-                        continue
-
-                    print(
-                        f"[ПЕРЕВОД] Начинаем перевод: {filename} ({'JSON' if is_json else 'LANG'})"
-                    )
-
+                    # 1. Читаем английский оригинал
                     with jar.open(en_file) as f:
                         content = f.read().decode("utf-8", errors="ignore")
                         if is_json:
                             try:
                                 en_data = json.loads(content)
-                            except json.JSONDecodeError:
-                                print(f"  [!] Ошибка чтения JSON, пропускаем.")
+                            except:
                                 continue
                         else:
                             en_data = parse_lang_file(content)
@@ -139,55 +105,89 @@ def main():
                     if not en_data:
                         continue
 
-                    keys = list(en_data.keys())
-                    values = list(en_data.values())
+                    # 2. Ищем существующий русский файл (даже если он неполный)
+                    ru_file_expected = re.sub(
+                        r"en_us", "ru_ru", en_file, flags=re.IGNORECASE
+                    )
+                    existing_ru_data = {}
+
+                    for f in files:
+                        if f.lower() == ru_file_expected.lower():
+                            with jar.open(f) as ru_f:
+                                ru_content = ru_f.read().decode(
+                                    "utf-8", errors="ignore"
+                                )
+                                if is_json:
+                                    try:
+                                        existing_ru_data = json.loads(ru_content)
+                                    except:
+                                        pass
+                                else:
+                                    existing_ru_data = parse_lang_file(ru_content)
+                            break
+
+                    # 3. УМНОЕ СРАВНЕНИЕ
                     ru_data = {}
+                    keys_to_translate = []
+                    values_to_translate = []
 
-                    # Пакетный перевод чанками (Batch translation)
-                    for i in range(0, len(keys), CHUNK_SIZE):
-                        chunk_keys = keys[i : i + CHUNK_SIZE]
-                        chunk_values = values[i : i + CHUNK_SIZE]
+                    for k, v in en_data.items():
+                        if not isinstance(v, str) or not v.strip():
+                            ru_data[k] = v
+                            continue
 
-                        to_translate = [
-                            v if (isinstance(v, str) and v.strip()) else ""
-                            for v in chunk_values
-                        ]
+                        ru_val = existing_ru_data.get(k)
+
+                        # Переводим, если: ключа нет, ИЛИ русский текст совпадает с английским (разраб схалтурил)
+                        if ru_val is None or (
+                            ru_val.strip() == v.strip() and re.search(r"[a-zA-Z]", v)
+                        ):
+                            keys_to_translate.append(k)
+                            values_to_translate.append(v)
+                        else:
+                            # Оставляем существующий хороший перевод
+                            ru_data[k] = ru_val
+
+                    if not keys_to_translate:
+                        print(f"[ПРОПУСК] {filename} — уже полностью переведен.")
+                        continue
+
+                    print(
+                        f"[ПЕРЕВОД] {filename} — Найдено {len(keys_to_translate)} непереведенных строк..."
+                    )
+
+                    # 4. Батч-перевод только недостающих строк
+                    for i in range(0, len(keys_to_translate), CHUNK_SIZE):
+                        chunk_keys = keys_to_translate[i : i + CHUNK_SIZE]
+                        chunk_values = values_to_translate[i : i + CHUNK_SIZE]
 
                         try:
-                            # Отправляем пачку строк в Google
-                            translated = translator.translate_batch(to_translate)
+                            translated = translator.translate_batch(chunk_values)
                         except Exception as e:
-                            print(
-                                f"  [!] Ошибка чанка (API), переводим по одному... ({e})"
-                            )
                             translated = []
-                            for val in to_translate:
-                                if val:
-                                    try:
-                                        translated.append(translator.translate(val))
-                                    except:
-                                        translated.append(val)
-                                else:
-                                    translated.append("")
+                            for val in chunk_values:
+                                try:
+                                    translated.append(translator.translate(val))
+                                except:
+                                    translated.append(val)
 
-                        # Собираем переведенный чанк обратно
                         for k, orig, trans in zip(chunk_keys, chunk_values, translated):
-                            if not to_translate[
-                                chunk_values.index(orig)
-                            ]:  # Если была пустая строка
-                                ru_data[k] = orig
-                            else:
-                                ru_data[k] = (
-                                    cleanup_translation(trans) if trans else orig
-                                )
+                            ru_data[k] = cleanup_translation(trans) if trans else orig
 
                         print(
-                            f"  Прогресс: {min(i + CHUNK_SIZE, len(keys))}/{len(keys)} строк..."
+                            f"  Прогресс: {min(i + CHUNK_SIZE, len(keys_to_translate))}/{len(keys_to_translate)} строк..."
                         )
-                        time.sleep(0.5)  # Пауза между чанками от бана IP
+                        time.sleep(0.5)
 
-                    # Сохранение в ресурспак
-                    out_path = os.path.join(rp_dir, ru_file.lower())
+                    # 5. Сохраняем в ресурспак
+                    out_file_name = (
+                        ru_file_expected.lower()
+                        if is_json
+                        else re.sub(
+                            r"en_us\.lang", "ru_RU.lang", en_file, flags=re.IGNORECASE
+                        )
+                    )
+                    out_path = os.path.join(rp_dir, out_file_name)
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
                     with open(out_path, "w", encoding="utf-8") as out_f:
@@ -197,19 +197,16 @@ def main():
                             out_f.write(build_lang_file(ru_data))
 
                     mods_translated += 1
-                    print(f"[УСПЕШНО] Мод {filename} переведен!\n")
+                    print(f"[УСПЕШНО] {filename} переведен!\n")
 
         except Exception as e:
-            print(f"[ОШИБКА] Не удалось обработать мод {filename}: {e}")
+            print(f"[ОШИБКА] {filename}: {e}")
 
-    # Архивация в ZIP
-    print(f"\nВсего обработано модов: {mods_processed}, переведено: {mods_translated}.")
     if mods_translated > 0:
-        print(f"Сборка ресурспака {RP_NAME}.zip ...")
         shutil.make_archive(rp_dir, "zip", rp_dir)
-        print(f"Готово! Ресурспак '{RP_NAME}.zip' создан рядом с вашей папкой mods.")
+        print(f"\nГотово! Ресурспак '{RP_NAME}.zip' обновлен.")
     else:
-        print("Новых переводов не потребовалось, ресурспак не собран.")
+        print("\nНовых переводов не потребовалось.")
 
 
 if __name__ == "__main__":
